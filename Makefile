@@ -3,7 +3,7 @@ VERSION := 2019-01-07
 SOURCES := $(wildcard *.go)
 COMMIT_ID := $(shell git describe --tags --always)
 BUILD_TIME := $(shell date +%FT%T%:z)
-LDFLAGS = -ldflags "-X main.VERSION=${VERSION} -X main.BUILD_DATE=${BUILD_TIME} -X main.COMMIT_ID=${COMMIT_ID} -d -s -w"
+LDFLAGS = -ldflags "-X main.VERSION=${VERSION} -X main.BUILD_DATE=${BUILD_TIME} -X main.COMMIT_ID=${COMMIT_ID} -s -w -d -extldflags '-static'"
 
 .DEFAULT_GOAL: $(BINARY)
 
@@ -12,7 +12,7 @@ $(BINARY): $(SOURCES)
 
 .PHONY: install
 install:
-		go install ${LDFLAGS} ./...
+		env CGO_ENABLED=0 go install ${LDFLAGS} ./...
 
 .PHONY: clean
 clean:
