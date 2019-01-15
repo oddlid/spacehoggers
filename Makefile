@@ -4,11 +4,16 @@ SOURCES := $(wildcard *.go)
 COMMIT_ID := $(shell git describe --tags --always)
 BUILD_TIME := $(shell date +%FT%T%:z)
 LDFLAGS = -ldflags "-X main.VERSION=${VERSION} -X main.BUILD_DATE=${BUILD_TIME} -X main.COMMIT_ID=${COMMIT_ID} -d -s -w"
+OSXLDFLAGS = -ldflags "-X main.VERSION=${VERSION} -X main.BUILD_DATE=${BUILD_TIME} -X main.COMMIT_ID=${COMMIT_ID} -s -w"
 
 .DEFAULT_GOAL: $(BINARY)
 
 $(BINARY): $(SOURCES)
 		env CGO_ENABLED=0 go build ${LDFLAGS} -o $@ ${SOURCES}
+
+.PHONY: osx
+osx:
+		env CGO_ENABLED=0 go build ${OSXLDFLAGS} -o ${BINARY}.mac ${SOURCES}
 
 .PHONY: install
 install:
