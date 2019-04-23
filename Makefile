@@ -1,5 +1,5 @@
 BINARY := spacehoggers
-VERSION := 2019-02-16
+VERSION := 2019-04-23
 SOURCES := main.go
 COMMIT_ID := $(shell git describe --tags --always)
 BUILD_TIME := $(shell go run -tags make main_make.go)
