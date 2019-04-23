@@ -32,7 +32,7 @@ type FInfo struct {
 	Path      string
 	Size      int64
 	Blocks    int64
-	BlockSize int32
+	//BlockSize int32
 	DiskUsage int64
 }
 
@@ -48,7 +48,7 @@ func NewFInfo(name, path string, ofi os.FileInfo) (fi FInfo) {
 	}
 	stt := st.(*syscall.Stat_t)
 	fi.Blocks = stt.Blocks
-	fi.BlockSize = stt.Blksize
+	//fi.BlockSize = stt.Blksize
 	fi.DiskUsage = fi.diskUsage()
 	return
 }
