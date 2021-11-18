@@ -1,192 +1,252 @@
+//go:build !make
 // +build !make
+
+/*
+2019-04-23:
+There's still a lot of discrepancy between "du" on *nix vs this code. Should find what causes this.
+*/
 
 package main
 
 import (
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
 	"syscall"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
-	"github.com/urfave/cli"
-	//"golang.org/x/sys/unix"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	"github.com/urfave/cli/v2"
+)
+
+type fileInfo struct {
+	name      string
+	path      string
+	size      int64
+	blocks    int64
+	diskUsage int64
+	//BlockSize int32
+}
+type byteSize float64
+type bySize []fileInfo
+type byDiskUsage []fileInfo
+
+const (
+	defaultBlockSize = 512
+	defaultSort      = "size"
 )
 
 const (
-	DEF_BLK_SIZE = 512
-	DEF_SORT     = "size"
+	_           = iota
+	KB byteSize = 1 << (10 * iota)
+	MB
+	GB
+	TB
+	PB
+	EB
+	ZB
+	YB
 )
 
 var (
-	VERSION    string = "undef"
-	COMMIT_ID  string = "undef"
-	BUILD_DATE string = "undef"
+	VERSION    = "undef"
+	COMMIT_ID  = "undef"
+	BUILD_DATE = "undef"
 )
 
-type FInfo struct {
-	Name      string
-	Path      string
-	Size      int64
-	Blocks    int64
-	//BlockSize int32
-	DiskUsage int64
-}
-
-func NewFInfo(name, path string, ofi os.FileInfo) (fi FInfo) {
-	fi = FInfo{
-		Name: name,
-		Path: path,
-		Size: ofi.Size(),
+func newFileInfo(path string, ofi os.FileInfo) (fi fileInfo) {
+	fi = fileInfo{
+		name: ofi.Name(),
+		path: path,
+		size: ofi.Size(),
 	}
 	st := ofi.Sys()
 	if st == nil {
 		return
 	}
 	stt := st.(*syscall.Stat_t)
-	fi.Blocks = stt.Blocks
+	fi.blocks = stt.Blocks
 	//fi.BlockSize = stt.Blksize
-	fi.DiskUsage = fi.diskUsage()
+	//llog := log.With().Int64("blocksize", stt.Blksize).Logger()
+	//llog.Debug().Send()
+	fi.diskUsage = fi.getDiskUsage()
 	return
 }
 
-func (fi FInfo) diskUsage() int64 {
+func (fi fileInfo) getDiskUsage() int64 {
 	//return fi.Blocks * int64(fi.BlockSize) // There's something very wrong with this math...
-	return fi.Blocks * DEF_BLK_SIZE // is this really right for all (file)systems and disks?
+	return fi.blocks * defaultBlockSize // is this really right for all (file)systems and disks?
 }
 
 // Implement sort interface
-type BySize []FInfo
-type ByDiskUsage []FInfo
-
-func (b BySize) Len() int {
+func (b bySize) Len() int {
 	return len(b)
 }
 
-func (b BySize) Swap(i, j int) {
+func (b bySize) Swap(i, j int) {
 	b[i], b[j] = b[j], b[i]
 }
 
 // Less has reversed logic, as default is to sort descending
-func (b BySize) Less(i, j int) bool {
-	return b[i].Size > b[j].Size
+func (b bySize) Less(i, j int) bool {
+	return b[i].size > b[j].size
 }
 
-func (b ByDiskUsage) Len() int {
+func (b byDiskUsage) Len() int {
 	return len(b)
 }
 
-func (b ByDiskUsage) Swap(i, j int) {
+func (b byDiskUsage) Swap(i, j int) {
 	b[i], b[j] = b[j], b[i]
 }
 
 // Less has reversed logic, as default is to sort descending
-func (b ByDiskUsage) Less(i, j int) bool {
-	return b[i].DiskUsage > b[j].DiskUsage
+func (b byDiskUsage) Less(i, j int) bool {
+	return b[i].diskUsage > b[j].diskUsage
 }
 
 // HR for Human Readable sizes
-func (f FInfo) HRSize() string {
-	return bytes(f.Size)
+func (f fileInfo) hrSize() string {
+	//return bytes(f.Size)
+	return hr(byteSize(f.size))
 }
 
-func (f FInfo) HRDiskUsage() string {
-	return bytes(f.DiskUsage)
+func (f fileInfo) hrDiskUsage() string {
+	//return bytes(f.DiskUsage)
+	return hr(byteSize(f.diskUsage))
 }
 
-func (f FInfo) RelPath() string {
-	return filepath.Join(f.Path, f.Name)
+func (f fileInfo) relPath() string {
+	return filepath.Join(f.path, f.name)
 }
 
-func (f FInfo) String() string {
-	return fieldStr(f.HRSize(), f.HRDiskUsage(), f.RelPath())
+func (f fileInfo) String() string {
+	return fieldStr(f.hrSize(), f.hrDiskUsage(), f.relPath())
 }
 
 func fieldStr(size, used, path string) string {
 	return fmt.Sprintf("%10s%12s  %s", size, used, path)
 }
 
+func hr(size byteSize) string {
+	switch {
+	case size > YB:
+		return fmt.Sprintf("%.1f E", size/YB)
+	case size > ZB:
+		return fmt.Sprintf("%.1f E", size/ZB)
+	case size > EB:
+		return fmt.Sprintf("%.1f E", size/EB)
+	case size > PB:
+		return fmt.Sprintf("%.1f P", size/PB)
+	case size > TB:
+		return fmt.Sprintf("%.1f T", size/TB)
+	case size > GB:
+		return fmt.Sprintf("%.1f G", size/GB)
+	case size > MB:
+		return fmt.Sprintf("%.1f M", size/MB)
+	case size > KB:
+		return fmt.Sprintf("%.1f K", size/KB)
+	default:
+		return fmt.Sprintf("%.1f B", size)
+	}
+}
+
 // logn(), humanateBytes() and bytes() from:
 // https://github.com/dustin/go-humanize/blob/master/bytes.go
-func logn(n, b float64) float64 {
-	return math.Log(n) / math.Log(b)
-}
+//func logn(n, b float64) float64 {
+//	return math.Log(n) / math.Log(b)
+//}
+//
+//func humanateBytes(s int64, base float64, sizes []string) string {
+//	if s < 10 {
+//		return fmt.Sprintf("%d B", s)
+//	}
+//	e := math.Floor(logn(float64(s), base))
+//	suffix := sizes[int(e)]
+//	val := math.Floor(float64(s)/math.Pow(base, e)*10+0.5) / 10
+//	//	f := "%.0f %s"
+//	//	if val < 10 {
+//	//		f = "%.1f %s"
+//	//	}
+//	f := "%.1f %s"
+//
+//	return fmt.Sprintf(f, val, suffix)
+//}
+//
+//func bytes(s int64) string {
+//	//sizes := []string{" B", "KB", "MB", "GB", "TB", "PB", "EB"}
+//	sizes := []string{"B", "K", "M", "G", "T", "P", "E"}
+//	//return humanateBytes(s, 1000, sizes)
+//	return humanateBytes(s, 1024, sizes)
+//}
 
-func humanateBytes(s int64, base float64, sizes []string) string {
-	if s < 10 {
-		return fmt.Sprintf("%d B", s)
+// getSizes() is just an attempt at a more efficient way of getting the size data
+// for the dirSize func
+func getSizes(info os.FileInfo) (size, diskUsage int64) {
+	size = info.Size()
+	st := info.Sys()
+	if st == nil {
+		return
 	}
-	e := math.Floor(logn(float64(s), base))
-	suffix := sizes[int(e)]
-	val := math.Floor(float64(s)/math.Pow(base, e)*10+0.5) / 10
-	//	f := "%.0f %s"
-	//	if val < 10 {
-	//		f = "%.1f %s"
-	//	}
-	f := "%.1f %s"
-
-	return fmt.Sprintf(f, val, suffix)
-}
-
-func bytes(s int64) string {
-	//sizes := []string{" B", "KB", "MB", "GB", "TB", "PB", "EB"}
-	sizes := []string{"B", "K", "M", "G", "T", "P", "E"}
-	//return humanateBytes(s, 1000, sizes)
-	return humanateBytes(s, 1024, sizes)
+	stt := st.(*syscall.Stat_t)
+	diskUsage = stt.Blocks * defaultBlockSize
+	// So, what we probably need to do here, is to just add the remainder of stt.BlkSize,
+	// not to multiply it by blocks, as that leads to a number waaaaay off the correct one.
+	//diskUsage = stt.Blocks * stt.Blksize
+	return
 }
 
 func dirSize(path string) (size, diskUsage int64, err error) {
 	err = filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			log.Debugf("dirSize(): %s", err)
 			return err
 		}
 		// With regards to actual disk usage, it would be better to include directories
 		// here, but as this is for calculating bytes used by files, and the fact that we're
 		// summarizing disk usage otherwise, it's probably better to do it this way here.
-		if !info.IsDir() {
-			fi := NewFInfo(info.Name(), path, info)
-			size += fi.Size
-			diskUsage += fi.DiskUsage
-		}
+		//if !info.IsDir() {
+		//	fi := NewFInfo(path, info)
+		//	size += fi.Size
+		//	diskUsage += fi.DiskUsage
+		//}
+		//fi := NewFInfo(path, info)
+		//size += fi.Size
+		//diskUsage += fi.DiskUsage
+		s, d := getSizes(info)
+		size += s
+		diskUsage += d
 		return err
 	})
 	return
 }
 
-func listDir(rootDir string) (fis []FInfo, err error) {
+func listDir(rootDir string) (fis []fileInfo, err error) {
 	f, err := os.Open(rootDir)
 	if err != nil {
-		log.Debug("listDir(): Error opening rootDir")
-		log.Error(err)
 		return
 	}
 	defer f.Close()
 	entries, err := f.Readdir(-1)
 	if err != nil {
-		log.Debug("listDir(): Error listing rootDir contents")
-		log.Error(err)
 		return
 	}
 
-	fis = make([]FInfo, 0, len(entries))
+	fis = make([]fileInfo, 0, len(entries))
 
 	for _, e := range entries {
 		size, diskUsage, err := dirSize(filepath.Join(rootDir, e.Name()))
 		if err != nil {
-			log.Debug("listDir(): Got error back from dirSize()")
-			log.Error(err)
+			log.Error().Err(err).Send()
 			continue
 		}
-		//fi := NewFInfo(e.Name(), rootDir, e)
-		fi := FInfo{
-			Name:      e.Name(),
-			Path:      rootDir,
-			Size:      size,
-			DiskUsage: diskUsage, // this is why we don't use NewFInfo here
+		//fi := NewFInfo(rootDir, e)
+		fi := fileInfo{
+			name:      e.Name(),
+			path:      rootDir,
+			size:      size,
+			diskUsage: diskUsage, // this is why we don't use NewFInfo here
 		}
 		fis = append(fis, fi)
 	}
@@ -194,14 +254,14 @@ func listDir(rootDir string) (fis []FInfo, err error) {
 	return
 }
 
-func listFiles(rootDir string) (fis []FInfo, err error) {
+func listFiles(rootDir string) (fis []fileInfo, err error) {
 	err = filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if !info.IsDir() {
 			//log.Debugf("Path: %q", path)
-			fi := NewFInfo(info.Name(), filepath.Dir(path), info)
+			fi := newFileInfo(filepath.Dir(path), info)
 			fis = append(fis, fi)
 		}
 		return err
@@ -217,9 +277,9 @@ func entryPoint(ctx *cli.Context) error {
 	all := ctx.Bool("all")
 	lim := ctx.Int("limit")
 
-	bySize := srt == DEF_SORT
+	sortBySize := srt == defaultSort
 
-	var fi []FInfo
+	var fi []fileInfo
 	var err error
 
 	if all {
@@ -229,20 +289,20 @@ func entryPoint(ctx *cli.Context) error {
 	}
 	if err != nil {
 		//return cli.NewExitError(err.Error(), 1)
-		log.Error(err)
+		log.Error().Err(err).Send()
 	}
 
-	if bySize {
+	if sortBySize {
 		if rev {
-			sort.Sort(sort.Reverse(BySize(fi)))
+			sort.Sort(sort.Reverse(bySize(fi)))
 		} else {
-			sort.Sort(BySize(fi))
+			sort.Sort(bySize(fi))
 		}
 	} else {
 		if rev {
-			sort.Sort(sort.Reverse(ByDiskUsage(fi)))
+			sort.Sort(sort.Reverse(byDiskUsage(fi)))
 		} else {
-			sort.Sort(ByDiskUsage(fi))
+			sort.Sort(byDiskUsage(fi))
 		}
 	}
 
@@ -268,63 +328,71 @@ func main() {
 	app.Version = fmt.Sprintf("%s_%s (Compiled: %s)", VERSION, COMMIT_ID, BUILD_DATE)
 	app.Compiled, _ = time.Parse(time.RFC3339, BUILD_DATE)
 
-	app.Authors = []cli.Author{
-		cli.Author{
+	app.Authors = []*cli.Author{
+		{
 			Name:  "Odd E. Ebbesen",
 			Email: "oddebb@gmail.com",
 		},
 	}
 
 	app.Flags = []cli.Flag{
-		cli.StringFlag{
-			Name:  "root, R",
-			Usage: "`DIR` to check",
-			Value: ".", //os.Getenv("PWD"),
+		&cli.StringFlag{
+			Name:    "root",
+			Aliases: []string{"R"},
+			Usage:   "`DIR` to check",
+			Value:   ".", //os.Getenv("PWD"),
 		},
-		cli.BoolFlag{
-			Name:  "all, a",
-			Usage: "List all files instead of summarizing directories",
+		&cli.BoolFlag{
+			Name:    "all",
+			Aliases: []string{"a"},
+			Usage:   "List all files instead of summarizing directories",
 		},
-		cli.StringFlag{
-			Name:  "sort, s",
-			Usage: "Sort by `OPTION`: size or usage",
-			Value: "size",
+		&cli.StringFlag{
+			Name:    "sort",
+			Aliases: []string{"s"},
+			Usage:   "Sort by `OPTION`: size or usage",
+			Value:   "size",
 		},
-		cli.BoolFlag{
-			Name:  "reverse, r",
-			Usage: "Reverse order (smallest to largest)",
+		&cli.BoolFlag{
+			Name:    "reverse",
+			Aliases: []string{"r"},
+			Usage:   "Reverse order (smallest to largest)",
 		},
-		cli.IntFlag{
-			Name:  "limit, l",
-			Usage: "How many results to display",
-			Value: 10,
+		&cli.IntFlag{
+			Name:    "limit",
+			Aliases: []string{"l"},
+			Usage:   "How many results to display",
+			Value:   10,
 		},
-		cli.StringFlag{
+		&cli.StringFlag{
 			Name:  "log-level",
 			Value: "info",
 			Usage: "Log `level` (options: debug, info, warn, error, fatal, panic)",
 		},
-		cli.BoolFlag{
-			Name:   "debug, d",
-			Usage:  "Run in debug mode",
-			EnvVar: "DEBUG",
+		&cli.BoolFlag{
+			Name:    "debug",
+			Aliases: []string{"d"},
+			Usage:   "Run in debug mode",
+			EnvVars: []string{"DEBUG"},
 		},
 	}
 
 	app.Before = func(c *cli.Context) error {
-		log.SetOutput(os.Stderr)
-		level, err := log.ParseLevel(c.String("log-level"))
-		if err != nil {
-			log.Fatal(err.Error())
+		zerolog.TimeFieldFormat = "2006-01-02T15:04:05.999-07:00"
+		if c.Bool("debug") {
+			zerolog.SetGlobalLevel(zerolog.DebugLevel)
+		} else {
+			if c.IsSet("log-level") {
+				level, err := zerolog.ParseLevel(c.String("log-level"))
+				if err != nil {
+					log.Error().Err(err).Send()
+				} else {
+					zerolog.SetGlobalLevel(level)
+				}
+			} else {
+				zerolog.SetGlobalLevel(zerolog.InfoLevel)
+			}
 		}
-		log.SetLevel(level)
-		if !c.IsSet("log-level") && !c.IsSet("l") && c.Bool("debug") {
-			log.SetLevel(log.DebugLevel)
-		}
-		log.SetFormatter(&log.TextFormatter{
-			DisableTimestamp: false,
-			FullTimestamp:    true,
-		})
 		return nil
 	}
 

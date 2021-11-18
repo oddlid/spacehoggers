@@ -1,6 +1,7 @@
 BINARY := spacehoggers
-VERSION := 2019-04-23
+VERSION := 2021-10-20
 SOURCES := main.go
+UNAME := $(shell uname -s)
 COMMIT_ID := $(shell git describe --tags --always)
 BUILD_TIME := $(shell go run -tags make main_make.go)
 LDFLAGS = -ldflags "-X main.VERSION=${VERSION} -X main.BUILD_DATE=${BUILD_TIME} -X main.COMMIT_ID=${COMMIT_ID} -s -w ${DFLAG}"
